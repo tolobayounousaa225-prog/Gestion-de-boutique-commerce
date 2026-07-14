@@ -1,0 +1,8 @@
+# Configuration de déploiement Render — détectée automatiquement
+services:
+  - type: web
+    name: gestion-commerce
+    runtime: static
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    autoDeploy: true
