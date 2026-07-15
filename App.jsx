@@ -57,6 +57,15 @@ table.tb{width:100%;border-collapse:collapse;font-size:13.5px}
 const fmt = (n) => (Number(n) || 0).toLocaleString("fr-FR") + " F";
 const MODES = { especes: "Espèces", orange: "Orange Money", mtn: "MTN MoMo", wave: "Wave", credit: "Crédit" };
 
+const joursAvant = (d) => Math.ceil((new Date(d) - new Date()) / 86400000);
+const dfr = (d) => new Date(d).toLocaleDateString("fr-FR");
+
+const waLink = (tel, msg) => {
+  let n = String(tel || "").replace(/\D/g, "");
+  if (n && !n.startsWith("225")) n = "225" + n;
+  return "https://wa.me/" + n + "?text=" + encodeURIComponent(msg);
+};
+
 const exportCSV = (nom, entetes, lignes) => {
   const esc = (v) => '"' + String(v ?? "").replace(/"/g, '""') + '"';
   const contenu = "\uFEFF" + [entetes, ...lignes].map((l) => l.map(esc).join(";")).join("\r\n");
@@ -187,6 +196,7 @@ export default function App() {
   const creances = clients.reduce((s, c) => s + Number(c.credit), 0);
   const dettes = fours.reduce((s, f) => s + Number(f.dette), 0);
   const alertesStock = produits.filter((p) => Number(p.stock) <= Number(p.seuil));
+  const alertesPeremption = produits.filter((p) => p.date_peremption && Number(p.stock) > 0 && joursAvant(p.date_peremption) <= 30);
   const caJour = ventes.filter((v) => v.date && v.date.startsWith(today())).reduce((s, v) => s + Number(v.total), 0);
   const benefTotal = ventes.reduce((s, v) => s + Number(v.marge), 0);
   const depensesTotal = useMemo(() => journal.filter((j) => j.type === "Dépense").reduce((s, j) => s + Number(j.credit), 0), [journal]);
@@ -292,7 +302,7 @@ export default function App() {
 
   const nouveauProduit = async (np) => {
     const { data, error } = await supabase.from("produits").insert({
-      nom: np.nom, cat: np.cat || "Divers", prix: +np.prix, cout: +np.cout || 0, stock: +np.stock || 0, seuil: +np.seuil || 5, code_barre: np.code ? String(np.code).trim() : null,
+      nom: np.nom, cat: np.cat || "Divers", prix: +np.prix, cout: +np.cout || 0, stock: +np.stock || 0, seuil: +np.seuil || 5, code_barre: np.code ? String(np.code).trim() : null, date_peremption: np.dper || null,
     }).select().single();
     if (error) return oops(error);
     setProduits((ps) => [...ps, data].sort((a, b) => a.nom.localeCompare(b.nom)));
@@ -381,7 +391,7 @@ export default function App() {
 
       <main style={{ flex: 1, padding: "26px 30px", overflowY: "auto", maxHeight: "100vh" }}>
         {charge && <div style={{ padding: 8, fontSize: 13, color: "#7A8078" }}>Synchronisation des données…</div>}
-        {page === "dash" && <Dash {...{ caJour, benefTotal, benefNet, valeurStock, creances, dettes, caisse, topProduits, alertesStock, clients, fours }} />}
+        {page === "dash" && <Dash {...{ caJour, benefTotal, benefNet, valeurStock, creances, dettes, caisse, topProduits, alertesStock, alertesPeremption, clients, fours }} />}
         {page === "stock" && <Stock {...{ produits, mouvements, mouvementStock, nouveauProduit }} />}
         {page === "ventes" && <Ventes {...{ produits, clients, ventes, encaisserVente, setTicket, setModeDoc }} />}
         {page === "clients" && <Clients {...{ clients, ventes, encaisserCredit, nouveauClient }} />}
@@ -414,7 +424,7 @@ export default function App() {
 }
 
 /* ============ TABLEAU DE BORD ============ */
-function Dash({ caJour, benefTotal, benefNet, valeurStock, creances, dettes, caisse, topProduits, alertesStock, clients, fours }) {
+function Dash({ caJour, benefTotal, benefNet, valeurStock, creances, dettes, caisse, topProduits, alertesStock, alertesPeremption, clients, fours }) {
   const maxQ = topProduits.length ? topProduits[0][1] : 1;
   return (
     <div>
@@ -443,7 +453,8 @@ function Dash({ caJour, benefTotal, benefNet, valeurStock, creances, dettes, cai
         </div>
         <div className="card" style={{ padding: 18 }}>
           <h3 className="display" style={{ margin: "0 0 12px", fontSize: 16 }}>Alertes</h3>
-          {alertesStock.length === 0 && creances === 0 && dettes === 0 && <Empty t="Tout est en ordre." />}
+          {alertesStock.length === 0 && alertesPeremption.length === 0 && creances === 0 && dettes === 0 && <Empty t="Tout est en ordre." />}
+          {alertesPeremption.map((p) => { const j = joursAvant(p.date_peremption); return <Alerte key={"per" + p.id} pill={j < 0 ? "bad" : "warn"} tag={j < 0 ? "Expiré" : "Péremption"} txt={`${p.nom} — ${j < 0 ? "expiré depuis " + (-j) + " j" : "expire dans " + j + " j"} (${dfr(p.date_peremption)})`} />; })}
           {alertesStock.map((p) => <Alerte key={p.id} pill="bad" tag="Stock bas" txt={`${p.nom} — reste ${p.stock} (seuil ${p.seuil})`} />)}
           {clients.filter((c) => Number(c.credit) > 0).map((c) => <Alerte key={c.id} pill="warn" tag="Crédit client" txt={`${c.nom} doit ${fmt(c.credit)}`} />)}
           {fours.filter((f) => Number(f.dette) > 0).map((f) => <Alerte key={f.id} pill="warn" tag="Dette" txt={`À payer à ${f.nom} : ${fmt(f.dette)}`} />)}
@@ -457,7 +468,7 @@ function Dash({ caJour, benefTotal, benefNet, valeurStock, creances, dettes, cai
 function Stock({ produits, mouvements, mouvementStock, nouveauProduit }) {
   const [tab, setTab] = useState("inv");
   const [f, setF] = useState({ prodId: "", type: "Entrée", qte: 1, motif: "" });
-  const [np, setNp] = useState({ nom: "", cat: "Alimentaire", prix: "", cout: "", stock: "", seuil: 5, code: "" });
+  const [np, setNp] = useState({ nom: "", cat: "Alimentaire", prix: "", cout: "", stock: "", seuil: 5, code: "", dper: "" });
   const [scanP, setScanP] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -473,7 +484,7 @@ function Stock({ produits, mouvements, mouvementStock, nouveauProduit }) {
     if (!np.nom || !np.prix) return;
     setBusy(true);
     await nouveauProduit(np);
-    setNp({ nom: "", cat: "Alimentaire", prix: "", cout: "", stock: "", seuil: 5, code: "" }); setBusy(false);
+    setNp({ nom: "", cat: "Alimentaire", prix: "", cout: "", stock: "", seuil: 5, code: "", dper: "" }); setBusy(false);
   };
 
   return (
@@ -489,16 +500,17 @@ function Stock({ produits, mouvements, mouvementStock, nouveauProduit }) {
       {tab === "inv" && (
         <div className="card">
           <div style={{ padding: "10px 14px 0", textAlign: "right" }}>
-            <button className="btn sm ghost" onClick={() => exportCSV("inventaire", ["Produit", "Catégorie", "Code-barres", "Prix vente", "Coût", "Stock", "Seuil"], produits.map((p) => [p.nom, p.cat, p.code_barre || "", p.prix, p.cout, p.stock, p.seuil]))}>Exporter Excel</button>
+            <button className="btn sm ghost" onClick={() => exportCSV("inventaire", ["Produit", "Catégorie", "Code-barres", "Prix vente", "Coût", "Stock", "Seuil", "Péremption"], produits.map((p) => [p.nom, p.cat, p.code_barre || "", p.prix, p.cout, p.stock, p.seuil, p.date_peremption ? dfr(p.date_peremption) : ""]))}>Exporter Excel</button>
           </div>
           {produits.length === 0 ? <div style={{ padding: 20 }}><Empty t="Aucun produit. Ajoute ton premier produit dans l'onglet « Nouveau produit »." /></div> : (
             <table className="tb">
-              <thead><tr><th>Produit</th><th>Catégorie</th><th>Prix vente</th><th>Coût</th><th>Stock</th><th>État</th></tr></thead>
+              <thead><tr><th>Produit</th><th>Catégorie</th><th>Prix vente</th><th>Coût</th><th>Stock</th><th>Péremption</th><th>État</th></tr></thead>
               <tbody>
                 {produits.map((p) => (
                   <tr key={p.id}>
                     <td><b>{p.nom}</b></td><td>{p.cat}</td><td>{fmt(p.prix)}</td><td>{fmt(p.cout)}</td>
                     <td><b>{Number(p.stock)}</b></td>
+                    <td>{p.date_peremption ? (() => { const j = joursAvant(p.date_peremption); return <span className={"pill " + (j < 0 ? "bad" : j <= 30 ? "warn" : "ok")}>{dfr(p.date_peremption)}{j < 0 ? " · expiré" : j <= 30 ? " · " + j + " j" : ""}</span>; })() : "—"}</td>
                     <td>{Number(p.stock) <= Number(p.seuil) ? <span className="pill bad">Stock bas</span> : <span className="pill ok">OK</span>}</td>
                   </tr>
                 ))}
@@ -550,6 +562,7 @@ function Stock({ produits, mouvements, mouvementStock, nouveauProduit }) {
             <Field l="Prix de vente (F)"><input className="inp" type="number" value={np.prix} onChange={(e) => setNp({ ...np, prix: e.target.value })} /></Field>
             <Field l="Coût d'achat (F)"><input className="inp" type="number" value={np.cout} onChange={(e) => setNp({ ...np, cout: e.target.value })} /></Field>
             <Field l="Stock initial"><input className="inp" type="number" value={np.stock} onChange={(e) => setNp({ ...np, stock: e.target.value })} /></Field>
+            <Field l="Date de péremption (optionnel)"><input className="inp" type="date" value={np.dper} onChange={(e) => setNp({ ...np, dper: e.target.value })} /></Field>
           </div>
           <button className="btn" style={{ marginTop: 8 }} disabled={busy} onClick={ajouter}>Ajouter au stock</button>
         </div>
@@ -718,7 +731,12 @@ function Clients({ clients, ventes, encaisserCredit, nouveauClient }) {
                   <tr key={c.id} style={{ background: sel?.id === c.id ? "#FBF7EA" : undefined }}>
                     <td><b>{c.nom}</b></td><td>{c.tel}</td>
                     <td>{Number(c.credit) > 0 ? <span className="pill warn">{fmt(c.credit)}</span> : <span className="pill ok">À jour</span>}</td>
-                    <td><button className="btn sm ghost" onClick={() => setSel(c)}>Détails</button></td>
+                    <td>
+                      <button className="btn sm ghost" onClick={() => setSel(c)}>Détails</button>
+                      {Number(c.credit) > 0 && c.tel && (
+                        <button className="btn sm gold" style={{ marginLeft: 6 }} onClick={() => window.open(waLink(c.tel, "Bonjour " + c.nom + ", rappel de MA BOUTIQUE : votre crédit en cours est de " + fmt(c.credit) + ". Merci de passer le régler quand vous le pouvez. Bonne journée !"), "_blank")}>Rappel WhatsApp</button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
