@@ -56,6 +56,14 @@ table.tb{width:100%;border-collapse:collapse;font-size:13.5px}
 
 const fmt = (n) => (Number(n) || 0).toLocaleString("fr-FR") + " F";
 const MODES = { especes: "Espèces", orange: "Orange Money", mtn: "MTN MoMo", wave: "Wave", credit: "Crédit" };
+
+const exportCSV = (nom, entetes, lignes) => {
+  const esc = (v) => '"' + String(v ?? "").replace(/"/g, '""') + '"';
+  const contenu = "\uFEFF" + [entetes, ...lignes].map((l) => l.map(esc).join(";")).join("\r\n");
+  const url = URL.createObjectURL(new Blob([contenu], { type: "text/csv;charset=utf-8" }));
+  const a = document.createElement("a"); a.href = url; a.download = nom + ".csv"; a.click();
+  URL.revokeObjectURL(url);
+};
 const today = () => new Date().toLocaleDateString("fr-FR");
 const dstr = (iso) => {
   const d = new Date(iso);
@@ -128,6 +136,8 @@ export default function App() {
   const [achats, setAchats] = useState([]);
   const [journal, setJournal] = useState([]);
   const [clotures, setClotures] = useState([]);
+  const [role, setRole] = useState(null);
+  const [profils, setProfils] = useState([]);
   const [ticket, setTicket] = useState(null);
   const [modeDoc, setModeDoc] = useState("ticket");
 
@@ -137,11 +147,18 @@ export default function App() {
     return () => sub.subscription.unsubscribe();
   }, []);
 
-  useEffect(() => { if (session) chargerTout(); }, [session]);
+  useEffect(() => {
+    if (!session) return;
+    supabase.from("profils").select("*").eq("id", session.user.id).single()
+      .then(({ data }) => setRole(data?.role || "caissier"));
+    chargerTout();
+  }, [session]);
+
+  useEffect(() => { if (role === "caissier") setPage("ventes"); }, [role]);
 
   const chargerTout = async () => {
     setCharge(true);
-    const [p, c, f, m, v, a, j, cl] = await Promise.all([
+    const [p, c, f, m, v, a, j, cl, pr] = await Promise.all([
       supabase.from("produits").select("*").order("nom"),
       supabase.from("clients").select("*").order("nom"),
       supabase.from("fournisseurs").select("*").order("nom"),
@@ -150,6 +167,7 @@ export default function App() {
       supabase.from("achats").select("*").order("id", { ascending: false }).limit(200),
       supabase.from("journal").select("*").order("id").limit(500),
       supabase.from("clotures").select("*").order("id", { ascending: false }).limit(100),
+      supabase.from("profils").select("*").order("email"),
     ]);
     setProduits(p.data || []);
     setClients(c.data || []);
@@ -159,6 +177,7 @@ export default function App() {
     setAchats((a.data || []).map((x) => ({ ...x, date: dstr(x.date_a), four: x.fournisseur_nom })));
     setJournal((j.data || []).map((x) => ({ ...x, date: new Date(x.date_j).toLocaleDateString("fr-FR") })));
     setClotures((cl.data || []).map((x) => ({ ...x, date: dstr(x.date_c) })));
+    setProfils(pr.data || []);
     setCharge(false);
   };
 
@@ -273,7 +292,7 @@ export default function App() {
 
   const nouveauProduit = async (np) => {
     const { data, error } = await supabase.from("produits").insert({
-      nom: np.nom, cat: np.cat || "Divers", prix: +np.prix, cout: +np.cout || 0, stock: +np.stock || 0, seuil: +np.seuil || 5,
+      nom: np.nom, cat: np.cat || "Divers", prix: +np.prix, cout: +np.cout || 0, stock: +np.stock || 0, seuil: +np.seuil || 5, code_barre: np.code ? String(np.code).trim() : null,
     }).select().single();
     if (error) return oops(error);
     setProduits((ps) => [...ps, data].sort((a, b) => a.nom.localeCompare(b.nom)));
@@ -308,18 +327,26 @@ export default function App() {
     setClotures((cs) => [{ ...data, date: dstr(data.date_c) }, ...cs]);
   };
 
+  const changerRole = async (id, nouveauRole) => {
+    const { error } = await supabase.from("profils").update({ role: nouveauRole }).eq("id", id);
+    if (error) return oops(error);
+    setProfils((ps) => ps.map((x) => (x.id === id ? { ...x, role: nouveauRole } : x)));
+  };
+
   /* ---------- Rendu ---------- */
   if (session === undefined) return <div className="app" style={{ alignItems: "center", justifyContent: "center" }}><style>{css}</style><div>Chargement…</div></div>;
   if (!session) return <Login />;
 
-  const NAV = [
+  const NAV_ALL = [
     ["dash", "◧", "Tableau de bord"],
     ["stock", "▤", "Stock"],
     ["ventes", "▦", "Ventes / Caisse"],
     ["clients", "◉", "Clients"],
     ["fours", "◈", "Fournisseurs"],
     ["compta", "◫", "Comptabilité"],
+    ["equipe", "◎", "Équipe"],
   ];
+  const NAV = role === "gerant" ? NAV_ALL : NAV_ALL.filter(([k]) => ["ventes", "clients"].includes(k));
 
   return (
     <div className="app">
@@ -340,6 +367,9 @@ export default function App() {
           ))}
         </nav>
         <div style={{ padding: 16, borderTop: "1px solid #1D4A3D" }}>
+          <div className="brandtxt" style={{ fontSize: 11, color: "#8FA79A", marginBottom: 4 }}>
+            Connecté : <b>{role === "gerant" ? "Gérant" : "Caissier"}</b>
+          </div>
           <div className="brandtxt" style={{ fontSize: 11, color: "#8FA79A", marginBottom: 8 }}>
             Caisse : <b style={{ color: "var(--amber)" }}>{fmt(caisse)}</b>
           </div>
@@ -357,6 +387,7 @@ export default function App() {
         {page === "clients" && <Clients {...{ clients, ventes, encaisserCredit, nouveauClient }} />}
         {page === "fours" && <Fours {...{ fours, produits, achats, receptionAchat, reglerDette, nouveauFour }} />}
         {page === "compta" && <Compta {...{ journal, caisse, valeurStock, creances, dettes, ventes, clotures, ajouterDepense, enregistrerCloture, depensesTotal }} />}
+        {page === "equipe" && role === "gerant" && <Equipe {...{ profils, changerRole, monId: session.user.id }} />}
       </main>
 
       {ticket && (
@@ -426,7 +457,8 @@ function Dash({ caJour, benefTotal, benefNet, valeurStock, creances, dettes, cai
 function Stock({ produits, mouvements, mouvementStock, nouveauProduit }) {
   const [tab, setTab] = useState("inv");
   const [f, setF] = useState({ prodId: "", type: "Entrée", qte: 1, motif: "" });
-  const [np, setNp] = useState({ nom: "", cat: "Alimentaire", prix: "", cout: "", stock: "", seuil: 5 });
+  const [np, setNp] = useState({ nom: "", cat: "Alimentaire", prix: "", cout: "", stock: "", seuil: 5, code: "" });
+  const [scanP, setScanP] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const valider = async () => {
@@ -441,12 +473,13 @@ function Stock({ produits, mouvements, mouvementStock, nouveauProduit }) {
     if (!np.nom || !np.prix) return;
     setBusy(true);
     await nouveauProduit(np);
-    setNp({ nom: "", cat: "Alimentaire", prix: "", cout: "", stock: "", seuil: 5 }); setBusy(false);
+    setNp({ nom: "", cat: "Alimentaire", prix: "", cout: "", stock: "", seuil: 5, code: "" }); setBusy(false);
   };
 
   return (
     <div>
       <H1 t="Stock" s="Inventaire, entrées et sorties" />
+      {scanP && <Scanner onClose={() => setScanP(false)} onDetect={(code) => { setScanP(false); setNp((x) => ({ ...x, code })); setTab("new"); }} />}
       <div style={{ borderBottom: "1px solid var(--line)", marginBottom: 16 }}>
         {[["inv", "Inventaire"], ["mvt", "Entrées / Sorties"], ["new", "Nouveau produit"]].map(([k, l]) => (
           <button key={k} className={"tab" + (tab === k ? " on" : "")} onClick={() => setTab(k)}>{l}</button>
@@ -455,6 +488,9 @@ function Stock({ produits, mouvements, mouvementStock, nouveauProduit }) {
 
       {tab === "inv" && (
         <div className="card">
+          <div style={{ padding: "10px 14px 0", textAlign: "right" }}>
+            <button className="btn sm ghost" onClick={() => exportCSV("inventaire", ["Produit", "Catégorie", "Code-barres", "Prix vente", "Coût", "Stock", "Seuil"], produits.map((p) => [p.nom, p.cat, p.code_barre || "", p.prix, p.cout, p.stock, p.seuil]))}>Exporter Excel</button>
+          </div>
           {produits.length === 0 ? <div style={{ padding: 20 }}><Empty t="Aucun produit. Ajoute ton premier produit dans l'onglet « Nouveau produit »." /></div> : (
             <table className="tb">
               <thead><tr><th>Produit</th><th>Catégorie</th><th>Prix vente</th><th>Coût</th><th>Stock</th><th>État</th></tr></thead>
@@ -510,6 +546,7 @@ function Stock({ produits, mouvements, mouvementStock, nouveauProduit }) {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             <Field l="Catégorie"><input className="inp" value={np.cat} onChange={(e) => setNp({ ...np, cat: e.target.value })} /></Field>
             <Field l="Seuil d'alerte"><input className="inp" type="number" value={np.seuil} onChange={(e) => setNp({ ...np, seuil: e.target.value })} /></Field>
+            <Field l="Code-barres (optionnel)"><div style={{ display: "flex", gap: 6 }}><input className="inp" value={np.code} onChange={(e) => setNp({ ...np, code: e.target.value })} /><button className="btn sm" type="button" onClick={() => setScanP(true)}>Scanner</button></div></Field>
             <Field l="Prix de vente (F)"><input className="inp" type="number" value={np.prix} onChange={(e) => setNp({ ...np, prix: e.target.value })} /></Field>
             <Field l="Coût d'achat (F)"><input className="inp" type="number" value={np.cout} onChange={(e) => setNp({ ...np, cout: e.target.value })} /></Field>
             <Field l="Stock initial"><input className="inp" type="number" value={np.stock} onChange={(e) => setNp({ ...np, stock: e.target.value })} /></Field>
@@ -529,6 +566,7 @@ function Ventes({ produits, clients, ventes, encaisserVente, setTicket, setModeD
   const [clientId, setClientId] = useState("");
   const [search, setSearch] = useState("");
   const [remise, setRemise] = useState("");
+  const [scan, setScan] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const brut = cart.reduce((s, l) => s + l.qte * l.prix, 0);
@@ -553,11 +591,16 @@ function Ventes({ produits, clients, ventes, encaisserVente, setTicket, setModeD
     await encaisserVente(cart, mode, clientId || clients[0]?.id, Number(remise) || 0);
     setCart([]); setRemise(""); setBusy(false);
   };
-  const list = produits.filter((p) => p.nom.toLowerCase().includes(search.toLowerCase()));
+  const list = produits.filter((p) => p.nom.toLowerCase().includes(search.toLowerCase()) || (p.code_barre || "").includes(search.trim()));
 
   return (
     <div>
       <H1 t="Ventes" s="Caisse, tickets et factures" />
+      {scan && <Scanner onClose={() => setScan(false)} onDetect={(code) => {
+        setScan(false);
+        const p = produits.find((x) => (x.code_barre || "") === code);
+        if (p) add(p); else { setSearch(code); alert("Aucun produit avec le code-barres : " + code); }
+      }} />}
       <div style={{ borderBottom: "1px solid var(--line)", marginBottom: 16 }}>
         {[["caisse", "Caisse"], ["hist", "Historique des ventes"]].map(([k, l]) => (
           <button key={k} className={"tab" + (tab === k ? " on" : "")} onClick={() => setTab(k)}>{l}</button>
@@ -567,7 +610,12 @@ function Ventes({ produits, clients, ventes, encaisserVente, setTicket, setModeD
       {tab === "caisse" && (
         <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 16 }}>
           <div>
-            <input className="inp" placeholder="Rechercher un produit…" value={search} onChange={(e) => setSearch(e.target.value)} style={{ marginBottom: 12 }} />
+            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+              <input className="inp" placeholder="Rechercher ou taper un code-barres puis Entrée…" value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") { const p = produits.find((x) => (x.code_barre || "") !== "" && x.code_barre === search.trim()); if (p) { add(p); setSearch(""); } } }} />
+              <button className="btn" onClick={() => setScan(true)}>Scanner</button>
+            </div>
             {list.length === 0 && <Empty t="Aucun produit disponible. Ajoute des produits dans le module Stock." />}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(160px,1fr))", gap: 10 }}>
               {list.map((p) => (
@@ -620,6 +668,9 @@ function Ventes({ produits, clients, ventes, encaisserVente, setTicket, setModeD
 
       {tab === "hist" && (
         <div className="card">
+          <div style={{ padding: "10px 14px 0", textAlign: "right" }}>
+            <button className="btn sm ghost" onClick={() => exportCSV("ventes", ["N°", "Date", "Client", "Articles", "Total", "Remise", "Paiement"], ventes.map((v) => [v.num, v.date, v.client, (v.lignes || []).reduce((s, l) => s + l.qte, 0), v.total, v.remise || 0, MODES[v.mode] || v.mode]))}>Exporter Excel</button>
+          </div>
           {ventes.length === 0 && <div style={{ padding: 20 }}><Empty t="Aucune vente pour l'instant." /></div>}
           {ventes.length > 0 && (
             <table className="tb">
@@ -811,6 +862,7 @@ function Compta({ journal, caisse, valeurStock, creances, dettes, ventes, clotur
   const [tab, setTab] = useState("journal");
   const [dep, setDep] = useState({ cat: "Loyer", lib: "", montant: "" });
   const [clo, setClo] = useState({ fond: "", compte: "" });
+  const [impr, setImpr] = useState(false);
   const [busy, setBusy] = useState(false);
   const actif = caisse + valeurStock + creances;
   const capitaux = actif - dettes;
@@ -844,6 +896,10 @@ function Compta({ journal, caisse, valeurStock, creances, dettes, ventes, clotur
 
       {tab === "journal" && (
         <div className="card">
+          <div style={{ padding: "10px 14px 0", textAlign: "right" }}>
+            <button className="btn sm ghost" style={{ marginRight: 8 }} onClick={() => exportCSV("journal", ["Date", "Libellé", "Type", "Débit", "Crédit"], journal.map((j) => [j.date, j.lib, j.type, j.debit, j.credit]))}>Exporter Excel</button>
+            <button className="btn sm ghost" onClick={() => setImpr(true)}>Imprimer / PDF</button>
+          </div>
           <table className="tb">
             <thead><tr><th>Date</th><th>Libellé</th><th>Type</th><th style={{ textAlign: "right" }}>Entrée (débit)</th><th style={{ textAlign: "right" }}>Sortie (crédit)</th></tr></thead>
             <tbody>
@@ -972,6 +1028,33 @@ function Compta({ journal, caisse, valeurStock, creances, dettes, ventes, clotur
           </div>
         </div>
       )}
+      {impr && (
+        <div className="overlay" onClick={() => setImpr(false)}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 10, padding: 24, width: "92%", maxWidth: 720, maxHeight: "85vh", overflowY: "auto" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <div>
+                <div className="display" style={{ fontSize: 18, fontWeight: 700 }}>MA BOUTIQUE — Journal de caisse</div>
+                <div style={{ fontSize: 12, color: "#7A8078" }}>Édité le {today()}</div>
+              </div>
+              <div>
+                <button className="btn sm gold" style={{ marginRight: 6 }} onClick={() => window.print()}>Imprimer / PDF</button>
+                <button className="btn sm" onClick={() => setImpr(false)}>Fermer</button>
+              </div>
+            </div>
+            <table className="tb">
+              <thead><tr><th>Date</th><th>Libellé</th><th>Type</th><th style={{ textAlign: "right" }}>Débit</th><th style={{ textAlign: "right" }}>Crédit</th></tr></thead>
+              <tbody>
+                {journal.map((j) => (
+                  <tr key={j.id}><td>{j.date}</td><td>{j.lib}</td><td>{j.type}</td>
+                    <td style={{ textAlign: "right" }}>{Number(j.debit) ? fmt(j.debit) : ""}</td>
+                    <td style={{ textAlign: "right" }}>{Number(j.credit) ? fmt(j.credit) : ""}</td></tr>
+                ))}
+                <tr style={{ background: "#FBF7EA" }}><td colSpan={3}><b>Solde de caisse</b></td><td colSpan={2} style={{ textAlign: "right" }}><b>{fmt(caisse)}</b></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1037,6 +1120,80 @@ function Facture({ v }) {
       </table>
       <div style={{ marginTop: 12, fontSize: 12, color: "#7A8078" }}>
         Mode de règlement : {MODES[v.mode] || v.mode}{Number(v.remise) > 0 ? " · Remise accordée : " + fmt(v.remise) : ""} · Arrêtée la présente facture à la somme de {fmt(v.total)}.
+      </div>
+    </div>
+  );
+}
+
+/* ============ SCANNER CODE-BARRES ============ */
+function Scanner({ onDetect, onClose }) {
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    let stream, timer, fini = false;
+    const video = document.getElementById("scanvid");
+    (async () => {
+      try {
+        if (!("BarcodeDetector" in window)) {
+          setErr("Le scanner n'est pas supporté par ce navigateur. Utilise Google Chrome (Android ou PC récent), ou saisis le code manuellement.");
+          return;
+        }
+        const det = new window.BarcodeDetector({ formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39", "qr_code"] });
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+        video.srcObject = stream;
+        await video.play();
+        timer = setInterval(async () => {
+          if (fini) return;
+          try {
+            const codes = await det.detect(video);
+            if (codes.length) { fini = true; onDetect(codes[0].rawValue); }
+          } catch {}
+        }, 350);
+      } catch (e) { setErr("Caméra inaccessible : " + (e.message || e)); }
+    })();
+    return () => { fini = true; if (timer) clearInterval(timer); if (stream) stream.getTracks().forEach((t) => t.stop()); };
+  }, []);
+  return (
+    <div className="overlay" onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 12, padding: 16, width: 340 }}>
+        <h3 className="display" style={{ margin: "0 0 10px", fontSize: 15 }}>Scanner un code-barres</h3>
+        {err ? <div style={{ color: "var(--red)", fontSize: 13 }}>{err}</div> : (
+          <>
+            <video id="scanvid" style={{ width: "100%", borderRadius: 8, background: "#000" }} muted playsInline />
+            <div style={{ fontSize: 12, color: "#7A8078", marginTop: 6 }}>Place le code-barres devant la caméra…</div>
+          </>
+        )}
+        <button className="btn" style={{ width: "100%", marginTop: 10 }} onClick={onClose}>Fermer</button>
+      </div>
+    </div>
+  );
+}
+
+/* ============ ÉQUIPE ============ */
+function Equipe({ profils, changerRole, monId }) {
+  return (
+    <div>
+      <H1 t="Équipe" s="Comptes utilisateurs et rôles" />
+      <div className="card" style={{ maxWidth: 640 }}>
+        <table className="tb">
+          <thead><tr><th>E-mail</th><th>Rôle</th></tr></thead>
+          <tbody>
+            {profils.map((p) => (
+              <tr key={p.id}>
+                <td>{p.email} {p.id === monId && <span className="pill ok" style={{ marginLeft: 6 }}>Toi</span>}</td>
+                <td>
+                  <select className="inp" style={{ width: 150 }} value={p.role} disabled={p.id === monId}
+                    onChange={(e) => changerRole(p.id, e.target.value)}>
+                    <option value="gerant">Gérant</option>
+                    <option value="caissier">Caissier</option>
+                  </select>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ fontSize: 13, color: "#7A8078", marginTop: 12, maxWidth: 640 }}>
+        Pour ajouter un caissier : il crée simplement son compte sur la page de connexion de l'application, puis il apparaît ici avec le rôle Caissier (accès limité à la caisse et aux clients). Tu peux ensuite changer son rôle à tout moment.
       </div>
     </div>
   );
