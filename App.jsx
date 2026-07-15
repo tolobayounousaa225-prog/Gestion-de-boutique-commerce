@@ -1,9 +1,9 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+import { supabase } from "./supabase.js";
 
 /* ============================================================
-   GESTION BOUTIQUE — Prototype complet
-   Modules : Tableau de bord, Stock, Ventes, Clients,
-   Fournisseurs, Comptabilité
+   GESTION BOUTIQUE v0.2 — Connexion + base de données Supabase
+   Toutes les opérations sont sauvegardées automatiquement.
    ============================================================ */
 
 const css = `
@@ -26,6 +26,7 @@ const css = `
 .btn{background:var(--green);color:#fff;border:none;border-radius:8px;padding:9px 16px;font-size:14px;
   font-weight:600;cursor:pointer}
 .btn:hover{background:var(--green2)}
+.btn:disabled{opacity:.5;cursor:wait}
 .btn.gold{background:var(--amber);color:#2A1F04}.btn.gold:hover{background:var(--amber2);color:#fff}
 .btn.ghost{background:transparent;color:var(--green);border:1px solid var(--green)}
 .btn.sm{padding:5px 10px;font-size:12px}
@@ -48,122 +49,248 @@ table.tb{width:100%;border-collapse:collapse;font-size:13.5px}
 .tab.on{color:var(--green);border-bottom-color:var(--amber)}
 .overlay{position:fixed;inset:0;background:rgba(20,30,25,.55);display:flex;align-items:center;
   justify-content:center;z-index:50}
+.loginbox{max-width:380px;width:92%;margin:auto;background:#fff;border:1px solid var(--line);border-radius:14px;padding:28px}
 @media(max-width:860px){.sidebar{width:64px}.navlabel{display:none}.brandtxt{display:none}}
 `;
 
-/* ---------- Données de démarrage ---------- */
-const P0 = [
-  { id: 1, nom: "Riz parfumé 25kg", cat: "Alimentaire", prix: 17500, cout: 15000, stock: 24, seuil: 10 },
-  { id: 2, nom: "Huile végétale 1L", cat: "Alimentaire", prix: 1500, cout: 1200, stock: 48, seuil: 20 },
-  { id: 3, nom: "Sucre 1kg", cat: "Alimentaire", prix: 800, cout: 650, stock: 6, seuil: 15 },
-  { id: 4, nom: "Savon de ménage", cat: "Hygiène", prix: 500, cout: 350, stock: 60, seuil: 24 },
-  { id: 5, nom: "Lait en poudre 400g", cat: "Alimentaire", prix: 2200, cout: 1800, stock: 18, seuil: 10 },
-  { id: 6, nom: "Spaghetti 500g", cat: "Alimentaire", prix: 600, cout: 450, stock: 72, seuil: 30 },
-  { id: 7, nom: "Concentré tomate 400g", cat: "Alimentaire", prix: 700, cout: 520, stock: 4, seuil: 12 },
-  { id: 8, nom: "Boisson gazeuse 1,5L", cat: "Boissons", prix: 1000, cout: 750, stock: 36, seuil: 12 },
-];
-const C0 = [
-  { id: 1, nom: "Mme Koné Awa", tel: "07 08 45 12 33", credit: 12500 },
-  { id: 2, nom: "M. Traoré Issa", tel: "05 66 90 21 04", credit: 0 },
-  { id: 3, nom: "Restaurant Chez Tantie", tel: "01 42 77 88 90", credit: 34000 },
-];
-const F0 = [
-  { id: 1, nom: "SODICOM Distribution", tel: "27 22 41 55 60", dette: 85000 },
-  { id: 2, nom: "Ets Ouattara & Fils", tel: "07 79 12 40 18", dette: 0 },
-];
-
-const fmt = (n) => (n || 0).toLocaleString("fr-FR") + " F";
+const fmt = (n) => (Number(n) || 0).toLocaleString("fr-FR") + " F";
 const today = () => new Date().toLocaleDateString("fr-FR");
-const now = () =>
-  new Date().toLocaleDateString("fr-FR") + " " + new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+const dstr = (iso) => {
+  const d = new Date(iso);
+  return d.toLocaleDateString("fr-FR") + " " + d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+};
 
-let seq = 100;
-const nid = () => ++seq;
+/* ============ ÉCRAN DE CONNEXION ============ */
+function Login() {
+  const [mode, setMode] = useState("login");
+  const [email, setEmail] = useState("");
+  const [pass, setPass] = useState("");
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
 
+  const go = async () => {
+    setBusy(true); setMsg("");
+    try {
+      if (mode === "login") {
+        const { error } = await supabase.auth.signInWithPassword({ email, password: pass });
+        if (error) setMsg("Connexion impossible : " + error.message);
+      } else {
+        const { error } = await supabase.auth.signUp({ email, password: pass });
+        if (error) setMsg("Inscription impossible : " + error.message);
+        else setMsg("Compte créé ! Vérifie ta boîte mail pour confirmer ton adresse, puis connecte-toi.");
+      }
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="app" style={{ alignItems: "center", justifyContent: "center" }}>
+      <style>{css}</style>
+      <div className="loginbox">
+        <div className="display" style={{ fontSize: 24, fontWeight: 700, textAlign: "center" }}>
+          Ma<span style={{ color: "var(--amber)" }}>Boutique</span>
+        </div>
+        <div style={{ textAlign: "center", color: "#7A8078", fontSize: 13, marginBottom: 20 }}>Gestion de commerce</div>
+        <Field l="Adresse e-mail">
+          <input className="inp" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="ton@email.com" />
+        </Field>
+        <Field l="Mot de passe">
+          <input className="inp" type="password" value={pass} onChange={(e) => setPass(e.target.value)}
+            placeholder="6 caractères minimum" onKeyDown={(e) => e.key === "Enter" && go()} />
+        </Field>
+        <button className="btn gold" style={{ width: "100%", marginTop: 6, fontSize: 15 }} disabled={busy} onClick={go}>
+          {busy ? "Un instant…" : mode === "login" ? "Se connecter" : "Créer mon compte"}
+        </button>
+        {msg && <div style={{ marginTop: 12, fontSize: 13, color: msg.includes("impossible") ? "var(--red)" : "var(--green)" }}>{msg}</div>}
+        <div style={{ textAlign: "center", marginTop: 16, fontSize: 13 }}>
+          {mode === "login" ? (
+            <span>Pas encore de compte ? <a href="#" onClick={(e) => { e.preventDefault(); setMode("signup"); setMsg(""); }} style={{ color: "var(--amber2)", fontWeight: 600 }}>Créer un compte</a></span>
+          ) : (
+            <span>Déjà un compte ? <a href="#" onClick={(e) => { e.preventDefault(); setMode("login"); setMsg(""); }} style={{ color: "var(--amber2)", fontWeight: 600 }}>Se connecter</a></span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============ APPLICATION ============ */
 export default function App() {
+  const [session, setSession] = useState(undefined); // undefined = vérification en cours
   const [page, setPage] = useState("dash");
-  const [produits, setProduits] = useState(P0);
-  const [clients, setClients] = useState(C0);
-  const [fours, setFours] = useState(F0);
-  const [mouvements, setMouvements] = useState([
-    { id: 1, date: today() + " 08:15", type: "Entrée", produit: "Riz parfumé 25kg", qte: 10, motif: "Achat fournisseur" },
-    { id: 2, date: today() + " 09:02", type: "Sortie", produit: "Sucre 1kg", qte: 4, motif: "Vente" },
-  ]);
+  const [charge, setCharge] = useState(true);
+  const [produits, setProduits] = useState([]);
+  const [clients, setClients] = useState([]);
+  const [fours, setFours] = useState([]);
+  const [mouvements, setMouvements] = useState([]);
   const [ventes, setVentes] = useState([]);
   const [achats, setAchats] = useState([]);
-  const [journal, setJournal] = useState([
-    { id: 1, date: today(), lib: "Solde initial caisse", debit: 150000, credit: 0, type: "Caisse" },
-  ]);
-  const [ticket, setTicket] = useState(null); // vente affichée en ticket/facture
+  const [journal, setJournal] = useState([]);
+  const [ticket, setTicket] = useState(null);
   const [modeDoc, setModeDoc] = useState("ticket");
 
-  /* ---------- Calculs globaux ---------- */
-  const caisse = useMemo(() => journal.reduce((s, j) => s + j.debit - j.credit, 0), [journal]);
-  const valeurStock = useMemo(() => produits.reduce((s, p) => s + p.stock * p.cout, 0), [produits]);
-  const creances = clients.reduce((s, c) => s + c.credit, 0);
-  const dettes = fours.reduce((s, f) => s + f.dette, 0);
-  const alertesStock = produits.filter((p) => p.stock <= p.seuil);
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => setSession(data.session || null));
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
+    return () => sub.subscription.unsubscribe();
+  }, []);
 
-  const caJour = ventes.filter((v) => v.date.startsWith(today())).reduce((s, v) => s + v.total, 0);
-  const benefTotal = ventes.reduce((s, v) => s + v.marge, 0);
+  useEffect(() => { if (session) chargerTout(); }, [session]);
 
+  const chargerTout = async () => {
+    setCharge(true);
+    const [p, c, f, m, v, a, j] = await Promise.all([
+      supabase.from("produits").select("*").order("nom"),
+      supabase.from("clients").select("*").order("nom"),
+      supabase.from("fournisseurs").select("*").order("nom"),
+      supabase.from("mouvements").select("*").order("id", { ascending: false }).limit(200),
+      supabase.from("ventes").select("*").order("id", { ascending: false }).limit(200),
+      supabase.from("achats").select("*").order("id", { ascending: false }).limit(200),
+      supabase.from("journal").select("*").order("id").limit(500),
+    ]);
+    setProduits(p.data || []);
+    setClients(c.data || []);
+    setFours((f.data || []).map((x) => ({ ...x })));
+    setMouvements((m.data || []).map((x) => ({ ...x, date: dstr(x.date_m) })));
+    setVentes((v.data || []).map((x) => ({ ...x, date: dstr(x.date_v), client: x.client_nom })));
+    setAchats((a.data || []).map((x) => ({ ...x, date: dstr(x.date_a), four: x.fournisseur_nom })));
+    setJournal((j.data || []).map((x) => ({ ...x, date: new Date(x.date_j).toLocaleDateString("fr-FR") })));
+    setCharge(false);
+  };
+
+  /* ---------- Calculs ---------- */
+  const caisse = useMemo(() => journal.reduce((s, j) => s + Number(j.debit) - Number(j.credit), 0), [journal]);
+  const valeurStock = useMemo(() => produits.reduce((s, p) => s + Number(p.stock) * Number(p.cout), 0), [produits]);
+  const creances = clients.reduce((s, c) => s + Number(c.credit), 0);
+  const dettes = fours.reduce((s, f) => s + Number(f.dette), 0);
+  const alertesStock = produits.filter((p) => Number(p.stock) <= Number(p.seuil));
+  const caJour = ventes.filter((v) => v.date && v.date.startsWith(today())).reduce((s, v) => s + Number(v.total), 0);
+  const benefTotal = ventes.reduce((s, v) => s + Number(v.marge), 0);
   const topProduits = useMemo(() => {
     const m = {};
-    ventes.forEach((v) => v.lignes.forEach((l) => (m[l.nom] = (m[l.nom] || 0) + l.qte)));
+    ventes.forEach((v) => (v.lignes || []).forEach((l) => (m[l.nom] = (m[l.nom] || 0) + l.qte)));
     return Object.entries(m).sort((a, b) => b[1] - a[1]).slice(0, 5);
   }, [ventes]);
 
-  /* ---------- Actions ---------- */
-  const journalAdd = (lib, debit, credit, type) =>
-    setJournal((j) => [...j, { id: nid(), date: today(), lib, debit, credit, type }]);
+  /* ---------- Actions (chaque action écrit dans la base) ---------- */
+  const oops = (e) => { alert("Erreur de sauvegarde : " + (e?.message || e)); };
 
-  const mouvAdd = (type, produit, qte, motif) =>
-    setMouvements((m) => [{ id: nid(), date: now(), type, produit, qte, motif }, ...m]);
+  const journalAdd = async (lib, debit, credit, type) => {
+    const { data, error } = await supabase.from("journal").insert({ lib, debit, credit, type }).select().single();
+    if (error) return oops(error);
+    setJournal((j) => [...j, { ...data, date: new Date(data.date_j).toLocaleDateString("fr-FR") }]);
+  };
 
-  const encaisserVente = (cart, mode, clientId) => {
+  const mouvAdd = async (type, produit, qte, motif) => {
+    const { data, error } = await supabase.from("mouvements").insert({ type, produit, qte, motif }).select().single();
+    if (error) return oops(error);
+    setMouvements((m) => [{ ...data, date: dstr(data.date_m) }, ...m]);
+  };
+
+  const majStock = async (prodId, nouveauStock, nouveauCout) => {
+    const patch = nouveauCout != null ? { stock: nouveauStock, cout: nouveauCout } : { stock: nouveauStock };
+    const { error } = await supabase.from("produits").update(patch).eq("id", prodId);
+    if (error) return oops(error);
+    setProduits((ps) => ps.map((p) => (p.id === prodId ? { ...p, ...patch } : p)));
+  };
+
+  const encaisserVente = async (cart, mode, clientId) => {
     const lignes = cart.map((c) => ({ ...c }));
     const total = lignes.reduce((s, l) => s + l.qte * l.prix, 0);
     const marge = lignes.reduce((s, l) => s + l.qte * (l.prix - l.cout), 0);
     const num = "T-" + String(ventes.length + 1).padStart(4, "0");
-    const cli = clients.find((c) => c.id === Number(clientId));
-    const vente = { id: nid(), num, date: now(), lignes, total, marge, mode, client: cli ? cli.nom : "Client comptant" };
+    const cli = mode === "credit" ? clients.find((c) => c.id === Number(clientId)) : null;
+    const { data, error } = await supabase.from("ventes").insert({
+      num, total, marge, mode, lignes,
+      client_id: cli ? cli.id : null,
+      client_nom: cli ? cli.nom : "Client comptant",
+    }).select().single();
+    if (error) return oops(error);
+    const vente = { ...data, date: dstr(data.date_v), client: data.client_nom };
     setVentes((v) => [vente, ...v]);
-    setProduits((ps) => ps.map((p) => {
-      const l = lignes.find((x) => x.id === p.id);
-      return l ? { ...p, stock: p.stock - l.qte } : p;
-    }));
-    lignes.forEach((l) => mouvAdd("Sortie", l.nom, l.qte, "Vente " + num));
-    if (mode === "credit" && cli) {
-      setClients((cs) => cs.map((c) => (c.id === cli.id ? { ...c, credit: c.credit + total } : c)));
-      journalAdd("Vente à crédit " + num + " — " + cli.nom, 0, 0, "Crédit client");
-    } else {
-      journalAdd("Vente " + num, total, 0, "Vente");
+    for (const l of lignes) {
+      const p = produits.find((x) => x.id === l.id);
+      if (p) await majStock(p.id, Number(p.stock) - l.qte);
+      await mouvAdd("Sortie", l.nom, l.qte, "Vente " + num);
     }
-    setTicket(vente);
-    setModeDoc("ticket");
+    if (cli) {
+      const nc = Number(cli.credit) + total;
+      const { error: e2 } = await supabase.from("clients").update({ credit: nc }).eq("id", cli.id);
+      if (e2) return oops(e2);
+      setClients((cs) => cs.map((c) => (c.id === cli.id ? { ...c, credit: nc } : c)));
+      await journalAdd("Vente à crédit " + num + " — " + cli.nom, 0, 0, "Crédit client");
+    } else {
+      await journalAdd("Vente " + num, total, 0, "Vente");
+    }
+    setTicket(vente); setModeDoc("ticket");
   };
 
-  const encaisserCredit = (cli, montant) => {
-    setClients((cs) => cs.map((c) => (c.id === cli.id ? { ...c, credit: Math.max(0, c.credit - montant) } : c)));
-    journalAdd("Règlement crédit — " + cli.nom, montant, 0, "Encaissement");
+  const encaisserCredit = async (cli, montant) => {
+    const nc = Math.max(0, Number(cli.credit) - montant);
+    const { error } = await supabase.from("clients").update({ credit: nc }).eq("id", cli.id);
+    if (error) return oops(error);
+    setClients((cs) => cs.map((c) => (c.id === cli.id ? { ...c, credit: nc } : c)));
+    await journalAdd("Règlement crédit — " + cli.nom, montant, 0, "Encaissement");
+    return nc;
   };
 
-  const receptionAchat = ({ fourId, prodId, qte, coutU, paye }) => {
+  const receptionAchat = async ({ fourId, prodId, qte, coutU, paye }) => {
     const f = fours.find((x) => x.id === Number(fourId));
     const p = produits.find((x) => x.id === Number(prodId));
-    const total = qte * coutU;
-    const reste = total - paye;
-    setProduits((ps) => ps.map((x) => (x.id === p.id ? { ...x, stock: x.stock + qte, cout: coutU } : x)));
-    mouvAdd("Entrée", p.nom, qte, "Achat — " + f.nom);
-    setAchats((a) => [{ id: nid(), date: now(), four: f.nom, produit: p.nom, qte, total, paye, reste }, ...a]);
-    if (paye > 0) journalAdd("Achat " + p.nom + " (" + f.nom + ")", 0, paye, "Achat");
-    if (reste > 0) setFours((fs) => fs.map((x) => (x.id === f.id ? { ...x, dette: x.dette + reste } : x)));
+    if (!f || !p) return;
+    const total = qte * coutU, reste = total - paye;
+    const { data, error } = await supabase.from("achats").insert({
+      fournisseur_id: f.id, fournisseur_nom: f.nom, produit: p.nom, qte, total, paye, reste,
+    }).select().single();
+    if (error) return oops(error);
+    setAchats((a) => [{ ...data, date: dstr(data.date_a), four: f.nom }, ...a]);
+    await majStock(p.id, Number(p.stock) + qte, coutU);
+    await mouvAdd("Entrée", p.nom, qte, "Achat — " + f.nom);
+    if (paye > 0) await journalAdd("Achat " + p.nom + " (" + f.nom + ")", 0, paye, "Achat");
+    if (reste > 0) {
+      const nd = Number(f.dette) + reste;
+      const { error: e2 } = await supabase.from("fournisseurs").update({ dette: nd }).eq("id", f.id);
+      if (e2) return oops(e2);
+      setFours((fs) => fs.map((x) => (x.id === f.id ? { ...x, dette: nd } : x)));
+    }
   };
 
-  const reglerDette = (f, montant) => {
-    setFours((fs) => fs.map((x) => (x.id === f.id ? { ...x, dette: Math.max(0, x.dette - montant) } : x)));
-    journalAdd("Règlement dette — " + f.nom, 0, montant, "Paiement fournisseur");
+  const reglerDette = async (f, montant) => {
+    const nd = Math.max(0, Number(f.dette) - montant);
+    const { error } = await supabase.from("fournisseurs").update({ dette: nd }).eq("id", f.id);
+    if (error) return oops(error);
+    setFours((fs) => fs.map((x) => (x.id === f.id ? { ...x, dette: nd } : x)));
+    await journalAdd("Règlement dette — " + f.nom, 0, montant, "Paiement fournisseur");
   };
+
+  const nouveauProduit = async (np) => {
+    const { data, error } = await supabase.from("produits").insert({
+      nom: np.nom, cat: np.cat || "Divers", prix: +np.prix, cout: +np.cout || 0, stock: +np.stock || 0, seuil: +np.seuil || 5,
+    }).select().single();
+    if (error) return oops(error);
+    setProduits((ps) => [...ps, data].sort((a, b) => a.nom.localeCompare(b.nom)));
+  };
+
+  const nouveauClient = async (nc) => {
+    const { data, error } = await supabase.from("clients").insert({ nom: nc.nom, tel: nc.tel }).select().single();
+    if (error) return oops(error);
+    setClients((cs) => [...cs, data].sort((a, b) => a.nom.localeCompare(b.nom)));
+  };
+
+  const nouveauFour = async (nf) => {
+    const { data, error } = await supabase.from("fournisseurs").insert({ nom: nf.nom, tel: nf.tel }).select().single();
+    if (error) return oops(error);
+    setFours((fs) => [...fs, data].sort((a, b) => a.nom.localeCompare(b.nom)));
+  };
+
+  const mouvementStock = async (p, type, qte, motif) => {
+    if (type === "Sortie" && qte > Number(p.stock)) { alert("Stock insuffisant : " + p.stock + " disponibles."); return; }
+    await majStock(p.id, Number(p.stock) + (type === "Entrée" ? qte : -qte));
+    await mouvAdd(type, p.nom, qte, motif || (type === "Entrée" ? "Réapprovisionnement" : "Ajustement"));
+  };
+
+  /* ---------- Rendu ---------- */
+  if (session === undefined) return <div className="app" style={{ alignItems: "center", justifyContent: "center" }}><style>{css}</style><div>Chargement…</div></div>;
+  if (!session) return <Login />;
 
   const NAV = [
     ["dash", "◧", "Tableau de bord"],
@@ -177,8 +304,6 @@ export default function App() {
   return (
     <div className="app">
       <style>{css}</style>
-
-      {/* ===== BARRE LATÉRALE ===== */}
       <aside className="sidebar">
         <div style={{ padding: "20px 18px 14px", borderBottom: "1px solid #1D4A3D" }}>
           <div className="display brandtxt" style={{ fontSize: 19, fontWeight: 700, color: "#fff" }}>
@@ -194,24 +319,26 @@ export default function App() {
             </button>
           ))}
         </nav>
-        <div className="brandtxt" style={{ padding: 16, fontSize: 11, color: "#8FA79A" }}>
-          Caisse : <b style={{ color: "var(--amber)" }}>{fmt(caisse)}</b>
+        <div style={{ padding: 16, borderTop: "1px solid #1D4A3D" }}>
+          <div className="brandtxt" style={{ fontSize: 11, color: "#8FA79A", marginBottom: 8 }}>
+            Caisse : <b style={{ color: "var(--amber)" }}>{fmt(caisse)}</b>
+          </div>
+          <button className="navbtn" style={{ padding: "6px 0", fontSize: 13 }} onClick={() => supabase.auth.signOut()}>
+            ⏻ <span className="navlabel">Déconnexion</span>
+          </button>
         </div>
       </aside>
 
-      {/* ===== CONTENU ===== */}
       <main style={{ flex: 1, padding: "26px 30px", overflowY: "auto", maxHeight: "100vh" }}>
-        {page === "dash" && (
-          <Dash {...{ caJour, benefTotal, valeurStock, creances, dettes, caisse, topProduits, alertesStock, clients, fours }} />
-        )}
-        {page === "stock" && <Stock {...{ produits, setProduits, mouvements, mouvAdd }} />}
+        {charge && <div style={{ padding: 8, fontSize: 13, color: "#7A8078" }}>Synchronisation des données…</div>}
+        {page === "dash" && <Dash {...{ caJour, benefTotal, valeurStock, creances, dettes, caisse, topProduits, alertesStock, clients, fours }} />}
+        {page === "stock" && <Stock {...{ produits, mouvements, mouvementStock, nouveauProduit }} />}
         {page === "ventes" && <Ventes {...{ produits, clients, ventes, encaisserVente, setTicket, setModeDoc }} />}
-        {page === "clients" && <Clients {...{ clients, setClients, ventes, encaisserCredit }} />}
-        {page === "fours" && <Fours {...{ fours, setFours, produits, achats, receptionAchat, reglerDette }} />}
+        {page === "clients" && <Clients {...{ clients, ventes, encaisserCredit, nouveauClient }} />}
+        {page === "fours" && <Fours {...{ fours, produits, achats, receptionAchat, reglerDette, nouveauFour }} />}
         {page === "compta" && <Compta {...{ journal, caisse, valeurStock, creances, dettes, ventes }} />}
       </main>
 
-      {/* ===== TICKET / FACTURE ===== */}
       {ticket && (
         <div className="overlay" onClick={() => setTicket(null)}>
           <div onClick={(e) => e.stopPropagation()}>
@@ -242,35 +369,25 @@ function Dash({ caJour, benefTotal, valeurStock, creances, dettes, caisse, topPr
         <Kpi lab="Créances clients" val={fmt(creances)} col={creances > 0 ? "var(--amber2)" : undefined} />
         <Kpi lab="Dettes fournisseurs" val={fmt(dettes)} col={dettes > 0 ? "var(--red)" : undefined} />
       </div>
-
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 18 }}>
         <div className="card" style={{ padding: 18 }}>
           <h3 className="display" style={{ margin: "0 0 12px", fontSize: 16 }}>Produits les plus vendus</h3>
           {topProduits.length === 0 && <Empty t="Aucune vente enregistrée. Passe en caisse pour commencer." />}
           {topProduits.map(([nom, q]) => (
             <div key={nom} style={{ marginBottom: 10 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
-                <span>{nom}</span><b>{q} vendus</b>
-              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}><span>{nom}</span><b>{q} vendus</b></div>
               <div style={{ background: "#EFECE1", borderRadius: 99, height: 8, marginTop: 4 }}>
                 <div style={{ width: (q / maxQ) * 100 + "%", background: "var(--amber)", height: 8, borderRadius: 99 }} />
               </div>
             </div>
           ))}
         </div>
-
         <div className="card" style={{ padding: 18 }}>
           <h3 className="display" style={{ margin: "0 0 12px", fontSize: 16 }}>Alertes</h3>
           {alertesStock.length === 0 && creances === 0 && dettes === 0 && <Empty t="Tout est en ordre." />}
-          {alertesStock.map((p) => (
-            <Alerte key={p.id} pill="bad" tag="Stock bas" txt={`${p.nom} — reste ${p.stock} (seuil ${p.seuil})`} />
-          ))}
-          {clients.filter((c) => c.credit > 0).map((c) => (
-            <Alerte key={c.id} pill="warn" tag="Crédit client" txt={`${c.nom} doit ${fmt(c.credit)}`} />
-          ))}
-          {fours.filter((f) => f.dette > 0).map((f) => (
-            <Alerte key={f.id} pill="warn" tag="Dette" txt={`À payer à ${f.nom} : ${fmt(f.dette)}`} />
-          ))}
+          {alertesStock.map((p) => <Alerte key={p.id} pill="bad" tag="Stock bas" txt={`${p.nom} — reste ${p.stock} (seuil ${p.seuil})`} />)}
+          {clients.filter((c) => Number(c.credit) > 0).map((c) => <Alerte key={c.id} pill="warn" tag="Crédit client" txt={`${c.nom} doit ${fmt(c.credit)}`} />)}
+          {fours.filter((f) => Number(f.dette) > 0).map((f) => <Alerte key={f.id} pill="warn" tag="Dette" txt={`À payer à ${f.nom} : ${fmt(f.dette)}`} />)}
         </div>
       </div>
     </div>
@@ -278,25 +395,25 @@ function Dash({ caJour, benefTotal, valeurStock, creances, dettes, caisse, topPr
 }
 
 /* ============ STOCK ============ */
-function Stock({ produits, setProduits, mouvements, mouvAdd }) {
+function Stock({ produits, mouvements, mouvementStock, nouveauProduit }) {
   const [tab, setTab] = useState("inv");
-  const [f, setF] = useState({ prodId: produits[0]?.id, type: "Entrée", qte: 1, motif: "" });
+  const [f, setF] = useState({ prodId: "", type: "Entrée", qte: 1, motif: "" });
   const [np, setNp] = useState({ nom: "", cat: "Alimentaire", prix: "", cout: "", stock: "", seuil: 5 });
+  const [busy, setBusy] = useState(false);
 
-  const valider = () => {
-    const p = produits.find((x) => x.id === Number(f.prodId));
+  const valider = async () => {
+    const p = produits.find((x) => x.id === Number(f.prodId || produits[0]?.id));
     const q = Number(f.qte);
     if (!p || q <= 0) return;
-    if (f.type === "Sortie" && q > p.stock) { alert("Stock insuffisant : " + p.stock + " disponibles."); return; }
-    setProduits((ps) => ps.map((x) => (x.id === p.id ? { ...x, stock: x.stock + (f.type === "Entrée" ? q : -q) } : x)));
-    mouvAdd(f.type, p.nom, q, f.motif || (f.type === "Entrée" ? "Réapprovisionnement" : "Ajustement"));
-    setF({ ...f, qte: 1, motif: "" });
+    setBusy(true);
+    await mouvementStock(p, f.type, q, f.motif);
+    setF({ ...f, qte: 1, motif: "" }); setBusy(false);
   };
-
-  const ajouter = () => {
+  const ajouter = async () => {
     if (!np.nom || !np.prix) return;
-    setProduits((ps) => [...ps, { id: nid(), nom: np.nom, cat: np.cat, prix: +np.prix, cout: +np.cout || 0, stock: +np.stock || 0, seuil: +np.seuil || 5 }]);
-    setNp({ nom: "", cat: "Alimentaire", prix: "", cout: "", stock: "", seuil: 5 });
+    setBusy(true);
+    await nouveauProduit(np);
+    setNp({ nom: "", cat: "Alimentaire", prix: "", cout: "", stock: "", seuil: 5 }); setBusy(false);
   };
 
   return (
@@ -310,18 +427,20 @@ function Stock({ produits, setProduits, mouvements, mouvAdd }) {
 
       {tab === "inv" && (
         <div className="card">
-          <table className="tb">
-            <thead><tr><th>Produit</th><th>Catégorie</th><th>Prix vente</th><th>Coût</th><th>Stock</th><th>État</th></tr></thead>
-            <tbody>
-              {produits.map((p) => (
-                <tr key={p.id}>
-                  <td><b>{p.nom}</b></td><td>{p.cat}</td><td>{fmt(p.prix)}</td><td>{fmt(p.cout)}</td>
-                  <td><b>{p.stock}</b></td>
-                  <td>{p.stock <= p.seuil ? <span className="pill bad">Stock bas</span> : <span className="pill ok">OK</span>}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {produits.length === 0 ? <div style={{ padding: 20 }}><Empty t="Aucun produit. Ajoute ton premier produit dans l'onglet « Nouveau produit »." /></div> : (
+            <table className="tb">
+              <thead><tr><th>Produit</th><th>Catégorie</th><th>Prix vente</th><th>Coût</th><th>Stock</th><th>État</th></tr></thead>
+              <tbody>
+                {produits.map((p) => (
+                  <tr key={p.id}>
+                    <td><b>{p.nom}</b></td><td>{p.cat}</td><td>{fmt(p.prix)}</td><td>{fmt(p.cout)}</td>
+                    <td><b>{Number(p.stock)}</b></td>
+                    <td>{Number(p.stock) <= Number(p.seuil) ? <span className="pill bad">Stock bas</span> : <span className="pill ok">OK</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       )}
 
@@ -330,14 +449,14 @@ function Stock({ produits, setProduits, mouvements, mouvAdd }) {
           <div className="card" style={{ padding: 16, alignSelf: "start" }}>
             <h3 className="display" style={{ margin: "0 0 12px", fontSize: 15 }}>Nouveau mouvement</h3>
             <Field l="Produit"><select className="inp" value={f.prodId} onChange={(e) => setF({ ...f, prodId: e.target.value })}>
-              {produits.map((p) => <option key={p.id} value={p.id}>{p.nom} (stock {p.stock})</option>)}
+              {produits.map((p) => <option key={p.id} value={p.id}>{p.nom} (stock {Number(p.stock)})</option>)}
             </select></Field>
             <Field l="Type"><select className="inp" value={f.type} onChange={(e) => setF({ ...f, type: e.target.value })}>
               <option>Entrée</option><option>Sortie</option>
             </select></Field>
             <Field l="Quantité"><input className="inp" type="number" min="1" value={f.qte} onChange={(e) => setF({ ...f, qte: e.target.value })} /></Field>
             <Field l="Motif"><input className="inp" placeholder="Ex : casse, réapprovisionnement…" value={f.motif} onChange={(e) => setF({ ...f, motif: e.target.value })} /></Field>
-            <button className="btn" style={{ width: "100%", marginTop: 6 }} onClick={valider}>Enregistrer le mouvement</button>
+            <button className="btn" style={{ width: "100%", marginTop: 6 }} disabled={busy} onClick={valider}>Enregistrer le mouvement</button>
           </div>
           <div className="card">
             <table className="tb">
@@ -347,7 +466,7 @@ function Stock({ produits, setProduits, mouvements, mouvAdd }) {
                   <tr key={m.id}>
                     <td>{m.date}</td>
                     <td><span className={"pill " + (m.type === "Entrée" ? "ok" : "warn")}>{m.type}</span></td>
-                    <td>{m.produit}</td><td><b>{m.qte}</b></td><td>{m.motif}</td>
+                    <td>{m.produit}</td><td><b>{Number(m.qte)}</b></td><td>{m.motif}</td>
                   </tr>
                 ))}
               </tbody>
@@ -367,7 +486,7 @@ function Stock({ produits, setProduits, mouvements, mouvAdd }) {
             <Field l="Coût d'achat (F)"><input className="inp" type="number" value={np.cout} onChange={(e) => setNp({ ...np, cout: e.target.value })} /></Field>
             <Field l="Stock initial"><input className="inp" type="number" value={np.stock} onChange={(e) => setNp({ ...np, stock: e.target.value })} /></Field>
           </div>
-          <button className="btn" style={{ marginTop: 8 }} onClick={ajouter}>Ajouter au stock</button>
+          <button className="btn" style={{ marginTop: 8 }} disabled={busy} onClick={ajouter}>Ajouter au stock</button>
         </div>
       )}
     </div>
@@ -379,25 +498,31 @@ function Ventes({ produits, clients, ventes, encaisserVente, setTicket, setModeD
   const [tab, setTab] = useState("caisse");
   const [cart, setCart] = useState([]);
   const [mode, setMode] = useState("especes");
-  const [clientId, setClientId] = useState(clients[0]?.id);
+  const [clientId, setClientId] = useState("");
   const [search, setSearch] = useState("");
+  const [busy, setBusy] = useState(false);
 
   const total = cart.reduce((s, l) => s + l.qte * l.prix, 0);
   const add = (p) => {
-    if (p.stock <= 0) return;
+    if (Number(p.stock) <= 0) return;
     setCart((c) => {
       const ex = c.find((x) => x.id === p.id);
       if (ex) {
-        if (ex.qte >= p.stock) return c;
+        if (ex.qte >= Number(p.stock)) return c;
         return c.map((x) => (x.id === p.id ? { ...x, qte: x.qte + 1 } : x));
       }
-      return [...c, { id: p.id, nom: p.nom, prix: p.prix, cout: p.cout, qte: 1 }];
+      return [...c, { id: p.id, nom: p.nom, prix: Number(p.prix), cout: Number(p.cout), qte: 1 }];
     });
   };
   const setQ = (id, q) => setCart((c) => c.map((x) => (x.id === id ? { ...x, qte: Math.max(1, Number(q) || 1) } : x)));
   const rm = (id) => setCart((c) => c.filter((x) => x.id !== id));
-  const payer = () => { if (!cart.length) return; encaisserVente(cart, mode, clientId); setCart([]); };
-
+  const payer = async () => {
+    if (!cart.length || busy) return;
+    if (mode === "credit" && !clientId && !clients.length) { alert("Ajoute d'abord un client pour vendre à crédit."); return; }
+    setBusy(true);
+    await encaisserVente(cart, mode, clientId || clients[0]?.id);
+    setCart([]); setBusy(false);
+  };
   const list = produits.filter((p) => p.nom.toLowerCase().includes(search.toLowerCase()));
 
   return (
@@ -413,12 +538,13 @@ function Ventes({ produits, clients, ventes, encaisserVente, setTicket, setModeD
         <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 16 }}>
           <div>
             <input className="inp" placeholder="Rechercher un produit…" value={search} onChange={(e) => setSearch(e.target.value)} style={{ marginBottom: 12 }} />
+            {list.length === 0 && <Empty t="Aucun produit disponible. Ajoute des produits dans le module Stock." />}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(160px,1fr))", gap: 10 }}>
               {list.map((p) => (
-                <button key={p.id} onClick={() => add(p)} className="card" style={{ padding: 12, textAlign: "left", cursor: p.stock > 0 ? "pointer" : "not-allowed", opacity: p.stock > 0 ? 1 : 0.45, border: "1px solid var(--line)" }}>
+                <button key={p.id} onClick={() => add(p)} className="card" style={{ padding: 12, textAlign: "left", cursor: Number(p.stock) > 0 ? "pointer" : "not-allowed", opacity: Number(p.stock) > 0 ? 1 : 0.45 }}>
                   <div style={{ fontWeight: 600, fontSize: 13.5 }}>{p.nom}</div>
                   <div className="display" style={{ color: "var(--amber2)", fontWeight: 700, marginTop: 4 }}>{fmt(p.prix)}</div>
-                  <div style={{ fontSize: 11.5, color: p.stock <= p.seuil ? "var(--red)" : "#7A8078", marginTop: 2 }}>Stock : {p.stock}</div>
+                  <div style={{ fontSize: 11.5, color: Number(p.stock) <= Number(p.seuil) ? "var(--red)" : "#7A8078", marginTop: 2 }}>Stock : {Number(p.stock)}</div>
                 </button>
               ))}
             </div>
@@ -451,8 +577,8 @@ function Ventes({ produits, clients, ventes, encaisserVente, setTicket, setModeD
                 </select>
               </Field>
             )}
-            <button className="btn gold" style={{ width: "100%", marginTop: 8, fontSize: 15 }} onClick={payer}>
-              Encaisser {total > 0 ? fmt(total) : ""}
+            <button className="btn gold" style={{ width: "100%", marginTop: 8, fontSize: 15 }} disabled={busy} onClick={payer}>
+              {busy ? "Enregistrement…" : "Encaisser " + (total > 0 ? fmt(total) : "")}
             </button>
           </div>
         </div>
@@ -468,7 +594,7 @@ function Ventes({ produits, clients, ventes, encaisserVente, setTicket, setModeD
                 {ventes.map((v) => (
                   <tr key={v.id}>
                     <td><b>{v.num}</b></td><td>{v.date}</td><td>{v.client}</td>
-                    <td>{v.lignes.reduce((s, l) => s + l.qte, 0)}</td>
+                    <td>{(v.lignes || []).reduce((s, l) => s + l.qte, 0)}</td>
                     <td><b>{fmt(v.total)}</b></td>
                     <td><span className={"pill " + (v.mode === "especes" ? "ok" : "warn")}>{v.mode === "especes" ? "Espèces" : "Crédit"}</span></td>
                     <td>
@@ -487,55 +613,56 @@ function Ventes({ produits, clients, ventes, encaisserVente, setTicket, setModeD
 }
 
 /* ============ CLIENTS ============ */
-function Clients({ clients, setClients, ventes, encaisserCredit }) {
+function Clients({ clients, ventes, encaisserCredit, nouveauClient }) {
   const [sel, setSel] = useState(null);
   const [pay, setPay] = useState("");
   const [nc, setNc] = useState({ nom: "", tel: "" });
-  const histo = sel ? ventes.filter((v) => v.client === sel.nom) : [];
+  const [busy, setBusy] = useState(false);
+  const histo = sel ? ventes.filter((v) => v.client_id === sel.id || v.client === sel.nom) : [];
 
   return (
     <div>
       <H1 t="Clients" s="Historique d'achats et suivi des crédits" />
       <div style={{ display: "grid", gridTemplateColumns: "1fr 360px", gap: 16 }}>
         <div className="card">
-          <table className="tb">
-            <thead><tr><th>Client</th><th>Téléphone</th><th>Crédit en cours</th><th></th></tr></thead>
-            <tbody>
-              {clients.map((c) => (
-                <tr key={c.id} style={{ background: sel?.id === c.id ? "#FBF7EA" : undefined }}>
-                  <td><b>{c.nom}</b></td><td>{c.tel}</td>
-                  <td>{c.credit > 0 ? <span className="pill warn">{fmt(c.credit)}</span> : <span className="pill ok">À jour</span>}</td>
-                  <td><button className="btn sm ghost" onClick={() => setSel(c)}>Détails</button></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {clients.length === 0 ? <div style={{ padding: 20 }}><Empty t="Aucun client enregistré." /></div> : (
+            <table className="tb">
+              <thead><tr><th>Client</th><th>Téléphone</th><th>Crédit en cours</th><th></th></tr></thead>
+              <tbody>
+                {clients.map((c) => (
+                  <tr key={c.id} style={{ background: sel?.id === c.id ? "#FBF7EA" : undefined }}>
+                    <td><b>{c.nom}</b></td><td>{c.tel}</td>
+                    <td>{Number(c.credit) > 0 ? <span className="pill warn">{fmt(c.credit)}</span> : <span className="pill ok">À jour</span>}</td>
+                    <td><button className="btn sm ghost" onClick={() => setSel(c)}>Détails</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
-
         <div>
           <div className="card" style={{ padding: 16, marginBottom: 14 }}>
             <h3 className="display" style={{ margin: "0 0 10px", fontSize: 15 }}>Nouveau client</h3>
             <Field l="Nom"><input className="inp" value={nc.nom} onChange={(e) => setNc({ ...nc, nom: e.target.value })} /></Field>
             <Field l="Téléphone"><input className="inp" value={nc.tel} onChange={(e) => setNc({ ...nc, tel: e.target.value })} /></Field>
-            <button className="btn" onClick={() => { if (!nc.nom) return; setClients((cs) => [...cs, { id: nid(), nom: nc.nom, tel: nc.tel, credit: 0 }]); setNc({ nom: "", tel: "" }); }}>Ajouter</button>
+            <button className="btn" disabled={busy} onClick={async () => { if (!nc.nom) return; setBusy(true); await nouveauClient(nc); setNc({ nom: "", tel: "" }); setBusy(false); }}>Ajouter</button>
           </div>
-
           {sel && (
             <div className="card" style={{ padding: 16 }}>
               <h3 className="display" style={{ margin: "0 0 6px", fontSize: 15 }}>{sel.nom}</h3>
               <div style={{ fontSize: 13, color: "#7A8078" }}>{sel.tel}</div>
               <div style={{ margin: "10px 0", fontSize: 14 }}>
-                Crédit en cours : <b style={{ color: sel.credit > 0 ? "var(--amber2)" : "var(--green)" }}>{fmt(sel.credit)}</b>
+                Crédit en cours : <b style={{ color: Number(sel.credit) > 0 ? "var(--amber2)" : "var(--green)" }}>{fmt(sel.credit)}</b>
               </div>
-              {sel.credit > 0 && (
+              {Number(sel.credit) > 0 && (
                 <div style={{ display: "flex", gap: 8 }}>
                   <input className="inp" type="number" placeholder="Montant reçu" value={pay} onChange={(e) => setPay(e.target.value)} />
-                  <button className="btn gold" onClick={() => { const m = Number(pay); if (m > 0) { encaisserCredit(sel, m); setSel({ ...sel, credit: Math.max(0, sel.credit - m) }); setPay(""); } }}>Encaisser</button>
+                  <button className="btn gold" disabled={busy} onClick={async () => { const m = Number(pay); if (m > 0) { setBusy(true); const nc2 = await encaisserCredit(sel, m); setSel({ ...sel, credit: nc2 }); setPay(""); setBusy(false); } }}>Encaisser</button>
                 </div>
               )}
               <div className="dash" />
               <b style={{ fontSize: 13 }}>Historique des achats</b>
-              {histo.length === 0 && <Empty t="Aucun achat enregistré dans cette session." />}
+              {histo.length === 0 && <Empty t="Aucun achat enregistré." />}
               {histo.map((v) => (
                 <div key={v.id} style={{ fontSize: 12.5, display: "flex", justifyContent: "space-between", padding: "5px 0", borderBottom: "1px solid #F0EDE3" }}>
                   <span>{v.num} · {v.date}</span><b>{fmt(v.total)}</b>
@@ -550,10 +677,11 @@ function Clients({ clients, setClients, ventes, encaisserCredit }) {
 }
 
 /* ============ FOURNISSEURS ============ */
-function Fours({ fours, setFours, produits, achats, receptionAchat, reglerDette }) {
-  const [f, setF] = useState({ fourId: fours[0]?.id, prodId: produits[0]?.id, qte: 10, coutU: "", paye: "" });
+function Fours({ fours, produits, achats, receptionAchat, reglerDette, nouveauFour }) {
+  const [f, setF] = useState({ fourId: "", prodId: "", qte: 10, coutU: "", paye: "" });
   const [nf, setNf] = useState({ nom: "", tel: "" });
   const [reg, setReg] = useState({});
+  const [busy, setBusy] = useState(false);
 
   return (
     <div>
@@ -562,10 +690,13 @@ function Fours({ fours, setFours, produits, achats, receptionAchat, reglerDette 
         <div>
           <div className="card" style={{ padding: 16, marginBottom: 14 }}>
             <h3 className="display" style={{ margin: "0 0 12px", fontSize: 15 }}>Nouvel achat</h3>
+            {(fours.length === 0 || produits.length === 0) && <Empty t="Ajoute d'abord un fournisseur et un produit." />}
             <Field l="Fournisseur"><select className="inp" value={f.fourId} onChange={(e) => setF({ ...f, fourId: e.target.value })}>
+              <option value="">— choisir —</option>
               {fours.map((x) => <option key={x.id} value={x.id}>{x.nom}</option>)}
             </select></Field>
             <Field l="Produit"><select className="inp" value={f.prodId} onChange={(e) => setF({ ...f, prodId: e.target.value })}>
+              <option value="">— choisir —</option>
               {produits.map((p) => <option key={p.id} value={p.id}>{p.nom}</option>)}
             </select></Field>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
@@ -575,9 +706,11 @@ function Fours({ fours, setFours, produits, achats, receptionAchat, reglerDette 
             <Field l={"Montant payé maintenant (total : " + fmt((Number(f.qte) || 0) * (Number(f.coutU) || 0)) + ")"}>
               <input className="inp" type="number" value={f.paye} onChange={(e) => setF({ ...f, paye: e.target.value })} />
             </Field>
-            <button className="btn" style={{ width: "100%" }} onClick={() => {
+            <button className="btn" style={{ width: "100%" }} disabled={busy} onClick={async () => {
               const qte = Number(f.qte), coutU = Number(f.coutU), paye = Number(f.paye) || 0;
-              if (qte > 0 && coutU > 0 && paye <= qte * coutU) { receptionAchat({ ...f, qte, coutU, paye }); setF({ ...f, coutU: "", paye: "" }); }
+              if (f.fourId && f.prodId && qte > 0 && coutU > 0 && paye <= qte * coutU) {
+                setBusy(true); await receptionAchat({ ...f, qte, coutU, paye }); setF({ ...f, coutU: "", paye: "" }); setBusy(false);
+              }
             }}>Réceptionner l'achat</button>
             <div style={{ fontSize: 11.5, color: "#7A8078", marginTop: 8 }}>Le reste non payé s'ajoute automatiquement à la dette du fournisseur.</div>
           </div>
@@ -586,45 +719,47 @@ function Fours({ fours, setFours, produits, achats, receptionAchat, reglerDette 
             <h3 className="display" style={{ margin: "0 0 10px", fontSize: 15 }}>Nouveau fournisseur</h3>
             <Field l="Nom"><input className="inp" value={nf.nom} onChange={(e) => setNf({ ...nf, nom: e.target.value })} /></Field>
             <Field l="Téléphone"><input className="inp" value={nf.tel} onChange={(e) => setNf({ ...nf, tel: e.target.value })} /></Field>
-            <button className="btn" onClick={() => { if (!nf.nom) return; setFours((fs) => [...fs, { id: nid(), nom: nf.nom, tel: nf.tel, dette: 0 }]); setNf({ nom: "", tel: "" }); }}>Ajouter</button>
+            <button className="btn" disabled={busy} onClick={async () => { if (!nf.nom) return; setBusy(true); await nouveauFour(nf); setNf({ nom: "", tel: "" }); setBusy(false); }}>Ajouter</button>
           </div>
         </div>
 
         <div>
           <div className="card" style={{ marginBottom: 14 }}>
-            <table className="tb">
-              <thead><tr><th>Fournisseur</th><th>Téléphone</th><th>Dette</th><th>Règlement</th></tr></thead>
-              <tbody>
-                {fours.map((x) => (
-                  <tr key={x.id}>
-                    <td><b>{x.nom}</b></td><td>{x.tel}</td>
-                    <td>{x.dette > 0 ? <span className="pill bad">{fmt(x.dette)}</span> : <span className="pill ok">Soldé</span>}</td>
-                    <td>
-                      {x.dette > 0 && (
-                        <div style={{ display: "flex", gap: 6 }}>
-                          <input className="inp" type="number" placeholder="Montant" style={{ width: 110, padding: "5px 8px" }}
-                            value={reg[x.id] || ""} onChange={(e) => setReg({ ...reg, [x.id]: e.target.value })} />
-                          <button className="btn sm" onClick={() => { const m = Number(reg[x.id]); if (m > 0) { reglerDette(x, m); setReg({ ...reg, [x.id]: "" }); } }}>Payer</button>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            {fours.length === 0 ? <div style={{ padding: 20 }}><Empty t="Aucun fournisseur enregistré." /></div> : (
+              <table className="tb">
+                <thead><tr><th>Fournisseur</th><th>Téléphone</th><th>Dette</th><th>Règlement</th></tr></thead>
+                <tbody>
+                  {fours.map((x) => (
+                    <tr key={x.id}>
+                      <td><b>{x.nom}</b></td><td>{x.tel}</td>
+                      <td>{Number(x.dette) > 0 ? <span className="pill bad">{fmt(x.dette)}</span> : <span className="pill ok">Soldé</span>}</td>
+                      <td>
+                        {Number(x.dette) > 0 && (
+                          <div style={{ display: "flex", gap: 6 }}>
+                            <input className="inp" type="number" placeholder="Montant" style={{ width: 110, padding: "5px 8px" }}
+                              value={reg[x.id] || ""} onChange={(e) => setReg({ ...reg, [x.id]: e.target.value })} />
+                            <button className="btn sm" disabled={busy} onClick={async () => { const m = Number(reg[x.id]); if (m > 0) { setBusy(true); await reglerDette(x, m); setReg({ ...reg, [x.id]: "" }); setBusy(false); } }}>Payer</button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
 
           <div className="card">
             <div style={{ padding: "12px 14px 0" }}><b style={{ fontSize: 14 }}>Historique des achats</b></div>
-            {achats.length === 0 ? <div style={{ padding: 16 }}><Empty t="Aucun achat enregistré dans cette session." /></div> : (
+            {achats.length === 0 ? <div style={{ padding: 16 }}><Empty t="Aucun achat enregistré." /></div> : (
               <table className="tb">
                 <thead><tr><th>Date</th><th>Fournisseur</th><th>Produit</th><th>Qté</th><th>Total</th><th>Payé</th><th>Reste</th></tr></thead>
                 <tbody>
                   {achats.map((a) => (
                     <tr key={a.id}>
-                      <td>{a.date}</td><td>{a.four}</td><td>{a.produit}</td><td>{a.qte}</td>
+                      <td>{a.date}</td><td>{a.four}</td><td>{a.produit}</td><td>{Number(a.qte)}</td>
                       <td>{fmt(a.total)}</td><td>{fmt(a.paye)}</td>
-                      <td>{a.reste > 0 ? <b style={{ color: "var(--red)" }}>{fmt(a.reste)}</b> : "—"}</td>
+                      <td>{Number(a.reste) > 0 ? <b style={{ color: "var(--red)" }}>{fmt(a.reste)}</b> : "—"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -642,10 +777,9 @@ function Compta({ journal, caisse, valeurStock, creances, dettes, ventes }) {
   const [tab, setTab] = useState("journal");
   const actif = caisse + valeurStock + creances;
   const capitaux = actif - dettes;
-
   const statsJour = useMemo(() => {
     const m = {};
-    ventes.forEach((v) => { const d = v.date.split(" ")[0]; m[d] = (m[d] || 0) + v.total; });
+    ventes.forEach((v) => { const d = (v.date || "").split(" ")[0]; if (d) m[d] = (m[d] || 0) + Number(v.total); });
     return Object.entries(m);
   }, [ventes]);
   const maxCA = Math.max(1, ...statsJour.map(([, v]) => v));
@@ -667,8 +801,8 @@ function Compta({ journal, caisse, valeurStock, creances, dettes, ventes }) {
               {[...journal].reverse().map((j) => (
                 <tr key={j.id}>
                   <td>{j.date}</td><td>{j.lib}</td><td><span className="pill ok">{j.type}</span></td>
-                  <td style={{ textAlign: "right", color: "var(--green)" }}>{j.debit ? "+" + fmt(j.debit) : ""}</td>
-                  <td style={{ textAlign: "right", color: "var(--red)" }}>{j.credit ? "−" + fmt(j.credit) : ""}</td>
+                  <td style={{ textAlign: "right", color: "var(--green)" }}>{Number(j.debit) ? "+" + fmt(j.debit) : ""}</td>
+                  <td style={{ textAlign: "right", color: "var(--red)" }}>{Number(j.credit) ? "−" + fmt(j.credit) : ""}</td>
                 </tr>
               ))}
               <tr style={{ background: "#FBF7EA" }}>
@@ -724,14 +858,14 @@ function Ticket({ v }) {
     <div className="ticket">
       <div style={{ textAlign: "center" }}>
         <div className="display" style={{ fontSize: 16, fontWeight: 700 }}>MA BOUTIQUE</div>
-        <div style={{ fontSize: 11 }}>Abobo, Abidjan · Tél : 07 00 00 00 00</div>
+        <div style={{ fontSize: 11 }}>Abidjan · Tél : 07 00 00 00 00</div>
       </div>
       <div className="dash" />
       <div>Ticket : <b>{v.num}</b></div>
       <div>Date : {v.date}</div>
       <div>Client : {v.client}</div>
       <div className="dash" />
-      {v.lignes.map((l) => (
+      {(v.lignes || []).map((l) => (
         <div key={l.id} style={{ display: "flex", justifyContent: "space-between" }}>
           <span>{l.qte} × {l.nom}</span><span>{fmt(l.qte * l.prix)}</span>
         </div>
@@ -753,11 +887,11 @@ function Facture({ v }) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
           <div className="display" style={{ fontSize: 20, fontWeight: 700 }}>MA BOUTIQUE</div>
-          <div style={{ color: "#7A8078", fontSize: 12 }}>Abobo, Abidjan · 07 00 00 00 00</div>
+          <div style={{ color: "#7A8078", fontSize: 12 }}>Abidjan · 07 00 00 00 00</div>
         </div>
         <div style={{ textAlign: "right" }}>
           <div className="display" style={{ fontSize: 15, fontWeight: 700, color: "var(--amber2)" }}>FACTURE</div>
-          <div>N° {v.num.replace("T-", "F-")}</div>
+          <div>N° {(v.num || "").replace("T-", "F-")}</div>
           <div style={{ fontSize: 12 }}>{v.date}</div>
         </div>
       </div>
@@ -765,7 +899,7 @@ function Facture({ v }) {
       <table className="tb" style={{ border: "1px solid var(--line)", borderRadius: 6 }}>
         <thead><tr><th>Désignation</th><th>Qté</th><th style={{ textAlign: "right" }}>P.U.</th><th style={{ textAlign: "right" }}>Montant</th></tr></thead>
         <tbody>
-          {v.lignes.map((l) => (
+          {(v.lignes || []).map((l) => (
             <tr key={l.id}><td>{l.nom}</td><td>{l.qte}</td><td style={{ textAlign: "right" }}>{fmt(l.prix)}</td><td style={{ textAlign: "right" }}>{fmt(l.qte * l.prix)}</td></tr>
           ))}
           <tr style={{ background: "#FBF7EA" }}>
